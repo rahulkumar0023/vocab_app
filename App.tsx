@@ -159,6 +159,7 @@ export default function App() {
   const [logs, setLogs] = useState<ReviewLogEntry[]>([]);
   const [profile, setProfile] = useState<UserProfile>(defaultProfile);
   const cardTransition = useRef(new Animated.Value(1)).current;
+  const completionPulse = useRef(new Animated.Value(0)).current;
   const pronunciationSoundRef = useRef<Audio.Sound | null>(null);
 
   const [activeTab, setActiveTab] = useState<ScreenTab>('today');
@@ -377,6 +378,30 @@ export default function App() {
       },
     ],
   };
+  const completionPulseStyle = {
+    opacity: completionPulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.18, 0.42],
+    }),
+    transform: [
+      {
+        scale: completionPulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 1.08],
+        }),
+      },
+    ],
+  };
+  const completionPillStyle = {
+    transform: [
+      {
+        scale: completionPulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 1.03],
+        }),
+      },
+    ],
+  };
 
   const focusCards = [...cards]
     .sort((left, right) => {
@@ -483,6 +508,36 @@ export default function App() {
       isCancelled = true;
     };
   }, [currentCard?.id, database]);
+
+  useEffect(() => {
+    let animation: Animated.CompositeAnimation | null = null;
+
+    if (goalCompleted) {
+      completionPulse.setValue(0);
+      animation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(completionPulse, {
+            toValue: 1,
+            duration: 1400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(completionPulse, {
+            toValue: 0,
+            duration: 1400,
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      animation.start();
+    } else {
+      completionPulse.stopAnimation();
+      completionPulse.setValue(0);
+    }
+
+    return () => {
+      animation?.stop();
+    };
+  }, [completionPulse, goalCompleted]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -1243,7 +1298,21 @@ export default function App() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.hero}>
+          <Pressable
+            disabled={!todaysWord}
+            accessibilityRole={todaysWord ? 'button' : undefined}
+            accessibilityLabel={
+              todaysWord
+                ? `Today's word ${todaysWord.word}. Open full word details.`
+                : undefined
+            }
+            style={({ pressed }) => [
+              styles.hero,
+              todaysWord && styles.heroInteractive,
+              pressed && todaysWord && styles.heroPressed,
+            ]}
+            onPress={() => todaysWord && setSelectedWordId(todaysWord.id)}
+          >
             <View style={styles.heroGlowWarm} />
             <View style={styles.heroGlowCool} />
             <View style={styles.heroGlowSoft} />
@@ -1262,11 +1331,24 @@ export default function App() {
                   <Text style={styles.heroEyebrow}>{heroEyebrowText}</Text>
                   <Text style={styles.heroTitle}>{heroTitleText}</Text>
                   <Text style={styles.heroSubtitle}>{heroSubtitleText}</Text>
+                  {todaysWord ? (
+                    <View style={styles.heroTapHint}>
+                      <Text style={styles.heroTapHintText}>Tap to open word details</Text>
+                    </View>
+                  ) : null}
                 </View>
 
-                <View style={styles.heroOrb}>
+                <View style={styles.heroOrbWrap}>
+                  {goalCompleted ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[styles.heroOrbPulseRing, completionPulseStyle]}
+                    />
+                  ) : null}
+                  <View style={[styles.heroOrb, goalCompleted && styles.heroOrbCompleted]}>
                   <Text style={styles.heroOrbValue}>{progressPercent}%</Text>
                   <Text style={styles.heroOrbLabel}>goal hit</Text>
+                </View>
                 </View>
               </View>
 
@@ -1288,10 +1370,29 @@ export default function App() {
                 <MetricCard label="Mastered" value={String(masteredCount)} accent="sand" />
               </View>
             </View>
-          </View>
+          </Pressable>
 
           {errorMessage ? (
-            <BannerCard tone="error" title="Something needs attention" copy={errorMessage} />
+            <BannerCard
+              tone="error"
+              title="Something needs attention"
+              copy={errorMessage}
+              actionLabel={
+                activeTab === 'add' && newWord.trim()
+                  ? isWordLookupLoading
+                    ? 'Trying...'
+                    : 'Try lookup again'
+                  : isRefreshing
+                    ? 'Refreshing...'
+                    : 'Try again'
+              }
+              actionDisabled={isRefreshing || isWordLookupLoading || isActionBusy}
+              onAction={
+                activeTab === 'add' && newWord.trim()
+                  ? () => void lookupWordDetails({ announceSuccess: true })
+                  : () => void refreshData()
+              }
+            />
           ) : null}
 
           {importSummary ? (
@@ -1331,6 +1432,10 @@ export default function App() {
 
                 {goalCompleted ? (
                   <View style={styles.completionCard}>
+                    <Animated.View style={[styles.completionCelebratePill, completionPillStyle]}>
+                      <View style={styles.completionCelebrateDot} />
+                      <Text style={styles.completionCelebrateLabel}>Goal reached</Text>
+                    </Animated.View>
                     <Text style={styles.completionTitle}>Nice work. You hit today&apos;s target.</Text>
                     <Text style={styles.completionCopy}>
                       {nextUpcoming
@@ -1361,6 +1466,7 @@ export default function App() {
                   </View>
                 ) : (
                   <View style={styles.favoriteEmptyCard}>
+                    <FavoriteShelfIllustration />
                     <Text style={styles.favoriteEmptyTitle}>Save words you want extra time with</Text>
                     <Text style={styles.favoriteEmptyCopy}>
                       Favorite a word from the study card or library and it will surface earlier in sessions and stay pinned here.
@@ -1424,6 +1530,8 @@ export default function App() {
                             currentCard.isFavorite && styles.favoriteIconButton,
                             pressed && styles.iconButtonPressed,
                           ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${currentCard.isFavorite ? 'Remove' : 'Add'} ${currentCard.word} ${currentCard.isFavorite ? 'from' : 'to'} favorites`}
                           onPress={() => void handleToggleFavorite(currentCard)}
                         >
                           <Text
@@ -1620,11 +1728,23 @@ export default function App() {
                             </View>
                           ) : null}
 
+                          {aiGenerationStatus ? (
+                            <View style={styles.aiStatusCard}>
+                              <Text style={styles.aiStatusLabel}>Study notes mode</Text>
+                              <Text style={styles.aiStatusCopy}>
+                                {formatAiStatusCopy(aiGenerationStatus)}
+                              </Text>
+                            </View>
+                          ) : null}
+
                           {aiMessage && aiMessageTone === 'error' ? (
                             <BannerCard
                               tone="error"
                               title="Study notes issue"
                               copy={aiMessage}
+                              actionLabel={isAiLoading ? 'Working...' : 'Try again'}
+                              actionDisabled={isActionBusy || isAiLoading}
+                              onAction={() => handleGenerateAiStudyKit(currentCard, 'current')}
                             />
                           ) : null}
 
@@ -2120,6 +2240,8 @@ export default function App() {
                           selectedWord.isFavorite && styles.favoriteIconButton,
                           pressed && styles.iconButtonPressed,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${selectedWord.isFavorite ? 'Remove' : 'Add'} ${selectedWord.word} ${selectedWord.isFavorite ? 'from' : 'to'} favorites`}
                         onPress={() => void handleToggleFavorite(selectedWord)}
                       >
                         <Text
@@ -2326,15 +2448,34 @@ function BannerCard({
   tone,
   title,
   copy,
+  actionLabel,
+  actionDisabled = false,
+  onAction,
 }: {
   tone: 'error' | 'success';
   title: string;
   copy: string;
+  actionLabel?: string;
+  actionDisabled?: boolean;
+  onAction?: () => void;
 }) {
   return (
     <View style={[styles.bannerCard, tone === 'error' ? styles.errorBanner : styles.successBanner]}>
       <Text style={styles.bannerTitle}>{title}</Text>
       <Text style={styles.bannerCopy}>{copy}</Text>
+      {actionLabel && onAction ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.bannerAction,
+            pressed && styles.bannerActionPressed,
+            actionDisabled && styles.actionDisabled,
+          ]}
+          disabled={actionDisabled}
+          onPress={onAction}
+        >
+          <Text style={styles.bannerActionLabel}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2618,6 +2759,8 @@ function WordRow({
   return (
     <Pressable
       style={({ pressed }) => [styles.wordRow, pressed && styles.wordRowPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${meta}. Open word details.`}
       onPress={onPress}
     >
       <View style={styles.wordRowHeader}>
@@ -2655,6 +2798,8 @@ function FavoriteWordCard({
     <View style={styles.favoriteWordCard}>
       <Pressable
         style={({ pressed }) => [styles.favoriteWordVisual, pressed && styles.favoriteWordCardPressed]}
+        accessibilityRole="button"
+        accessibilityLabel={`Open favorite word ${card.word}`}
         onPress={onOpen}
       >
         {studyKit?.memoryImageUri ? (
@@ -2683,6 +2828,8 @@ function FavoriteWordCard({
               styles.favoriteToggleChip,
               pressed && styles.favoriteToggleChipPressed,
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${card.word} from favorites`}
             onPress={onToggleFavorite}
           >
             <Text style={styles.favoriteToggleChipLabel}>Favorited</Text>
@@ -2700,6 +2847,33 @@ function FavoriteWordCard({
           <GhostButton label="Open card" onPress={onOpen} />
         </View>
       </View>
+    </View>
+  );
+}
+
+function FavoriteShelfIllustration() {
+  return (
+    <View
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel="Illustration showing favorite word cards waiting to be pinned to the shelf."
+      style={styles.favoriteEmptyIllustration}
+    >
+      <View style={[styles.favoriteEmptyIllustrationCard, styles.favoriteEmptyIllustrationCardBack]}>
+        <Text style={styles.favoriteEmptyIllustrationWord}>spark</Text>
+      </View>
+      <View style={[styles.favoriteEmptyIllustrationCard, styles.favoriteEmptyIllustrationCardMid]}>
+        <Text style={styles.favoriteEmptyIllustrationWord}>wander</Text>
+      </View>
+      <View style={styles.favoriteEmptyIllustrationCard}>
+        <View style={styles.favoriteEmptyIllustrationBadge}>
+          <Text style={styles.favoriteEmptyIllustrationBadgeText}>favorite</Text>
+        </View>
+        <Text style={styles.favoriteEmptyIllustrationWord}>bright</Text>
+        <Text style={styles.favoriteEmptyIllustrationCopy}>Pin words you want to meet more often.</Text>
+      </View>
+      <View style={styles.favoriteEmptyIllustrationSpark} />
+      <View style={styles.favoriteEmptyIllustrationSparkSmall} />
     </View>
   );
 }
@@ -2861,6 +3035,21 @@ function buildFavoriteSceneCopy(word: string, topic: string | null, memoryPrompt
   return `Picture a ${mood} ${mascot}${topicHint} acting out "${word}" with ${prop}.`;
 }
 
+function formatAiStatusCopy(status: AiGenerationStatus) {
+  if (
+    typeof status.dailyLimit === 'number' &&
+    typeof status.remainingToday === 'number'
+  ) {
+    return `${status.providerLabel} is active. ${status.remainingToday} of ${status.dailyLimit} cloud notes left today.`;
+  }
+
+  if (status.provider === 'smart-coach') {
+    return 'Smart Coach is active and always available on this device.';
+  }
+
+  return `${status.providerLabel} is active for this study kit.`;
+}
+
 function getDateKey(value: string | Date) {
   return new Date(value).toISOString().slice(0, 10);
 }
@@ -2952,7 +3141,46 @@ function formatWeeklyActivityLabel(
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
-    return error.message;
+    const message = error.message.trim();
+    const normalized = message.toLowerCase();
+
+    if (
+      normalized.includes('network request failed') ||
+      normalized.includes('fetch failed') ||
+      normalized.includes('networkerror') ||
+      normalized.includes('internet')
+    ) {
+      return 'No internet right now. Check your connection and try again.';
+    }
+
+    if (
+      normalized.includes('daily limit') ||
+      normalized.includes('quota') ||
+      normalized.includes('too many requests')
+    ) {
+      return 'Today’s cloud AI limit is used up. Smart Coach can still help for the rest of today.';
+    }
+
+    if (
+      normalized.includes('no dictionary result') ||
+      normalized.includes("couldn't find details") ||
+      normalized.includes('word not found')
+    ) {
+      return 'That word was not found. Try a simpler spelling or the base form of the word.';
+    }
+
+    if (normalized.includes('database is not ready')) {
+      return 'The app is still loading your study data. Try again in a moment.';
+    }
+
+    if (
+      normalized.includes('notification') &&
+      (normalized.includes('permission') || normalized.includes('denied'))
+    ) {
+      return 'Notifications are off for this app. Enable them in device settings to get reminders.';
+    }
+
+    return message;
   }
 
   return 'Unknown error';
@@ -3123,6 +3351,12 @@ const styles = StyleSheet.create({
     },
     elevation: 7,
   },
+  heroInteractive: {
+    minHeight: 0,
+  },
+  heroPressed: {
+    opacity: 0.96,
+  },
   heroGlowWarm: {
     position: 'absolute',
     top: -26,
@@ -3214,6 +3448,30 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     maxWidth: 320,
   },
+  heroTapHint: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 248, 241, 0.74)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  heroTapHintText: {
+    color: '#7b5441',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  heroOrbWrap: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroOrbPulseRing: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 247, 238, 0.74)',
+  },
   heroOrb: {
     width: 102,
     minHeight: 102,
@@ -3225,6 +3483,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 10,
     gap: 3,
+  },
+  heroOrbCompleted: {
+    borderColor: '#ffc493',
+    backgroundColor: 'rgba(255, 251, 248, 0.96)',
   },
   heroOrbValue: {
     color: '#23314d',
@@ -3317,6 +3579,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  bannerAction: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e2c3b0',
+    backgroundColor: '#fff9f4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  bannerActionPressed: {
+    opacity: 0.82,
+  },
+  bannerActionLabel: {
+    color: '#7c5748',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   sectionCard: {
     backgroundColor: '#fffdfb',
     borderRadius: 30,
@@ -3405,6 +3685,31 @@ const styles = StyleSheet.create({
     borderColor: '#f6c9a7',
     padding: 16,
     gap: 8,
+  },
+  completionCelebratePill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 999,
+    backgroundColor: '#fff7f0',
+    borderWidth: 1,
+    borderColor: '#f6cda9',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  completionCelebrateDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#ff9a62',
+  },
+  completionCelebrateLabel: {
+    color: '#9a562e',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   completionTitle: {
     color: '#874b2c',
@@ -3760,6 +4065,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  aiStatusCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#d8e4db',
+    backgroundColor: '#f7fbf8',
+    padding: 12,
+    gap: 4,
+  },
+  aiStatusLabel: {
+    color: '#708175',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  },
+  aiStatusCopy: {
+    color: '#516171',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   aiProviderStack: {
     gap: 8,
   },
@@ -4047,6 +4372,88 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fcfa',
     padding: 18,
     gap: 10,
+  },
+  favoriteEmptyIllustration: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 164,
+    marginBottom: 4,
+  },
+  favoriteEmptyIllustrationCard: {
+    width: 170,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#d8e8df',
+    backgroundColor: '#fffefc',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
+    shadowColor: '#d8b6a0',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    elevation: 2,
+  },
+  favoriteEmptyIllustrationCardBack: {
+    position: 'absolute',
+    top: 18,
+    left: 28,
+    transform: [{ rotate: '-8deg' }],
+    backgroundColor: '#f7fbff',
+  },
+  favoriteEmptyIllustrationCardMid: {
+    position: 'absolute',
+    top: 8,
+    right: 28,
+    transform: [{ rotate: '9deg' }],
+    backgroundColor: '#fff7f2',
+  },
+  favoriteEmptyIllustrationBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: '#fff0e4',
+    borderWidth: 1,
+    borderColor: '#ffc29c',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  favoriteEmptyIllustrationBadgeText: {
+    color: '#c06435',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+  },
+  favoriteEmptyIllustrationWord: {
+    color: '#243247',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  favoriteEmptyIllustrationCopy: {
+    color: '#657484',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  favoriteEmptyIllustrationSpark: {
+    position: 'absolute',
+    top: 10,
+    right: 44,
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    backgroundColor: '#ffe2be',
+  },
+  favoriteEmptyIllustrationSparkSmall: {
+    position: 'absolute',
+    bottom: 18,
+    left: 54,
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: '#cfe5f7',
   },
   favoriteEmptyTitle: {
     color: '#243247',
