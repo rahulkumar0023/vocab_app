@@ -67,10 +67,6 @@ import {
 } from './src/services/reminders';
 import {
   generateAiStudyKit,
-  getAiProviderOptions,
-  getLlmConfigurationHelp,
-  getLlmMode,
-  getLlmModeLabel,
   type AiGenerationStatus,
   type AiProviderOption,
 } from './src/services/llmCoach';
@@ -262,10 +258,6 @@ export default function App() {
 
   const now = new Date();
   const todayKey = getDateKey(now);
-  const llmMode = getLlmMode();
-  const llmModeLabel = getLlmModeLabel();
-  const llmHelp = getLlmConfigurationHelp();
-  const aiProviderOptions = getAiProviderOptions();
   const isActionBusy =
     isMutating ||
     isImporting ||
@@ -789,11 +781,7 @@ export default function App() {
 
       setAiGenerationStatus(result.status);
       setAiMessageTone('success');
-      setAiMessage(
-        generated.memoryImageUri
-          ? `AI study kit and memory image are ready with ${generated.model}.`
-          : `AI study kit and visual memory scene are ready with ${generated.model}.`,
-      );
+      setAiMessage(null);
       await triggerSuccessHaptic();
     } catch (error) {
       setAiMessageTone('error');
@@ -1448,70 +1436,42 @@ export default function App() {
 
                         <View style={styles.aiPanel}>
                           <View style={styles.aiPanelHeader}>
-                            <Text style={styles.aiPanelTitle}>AI Study Kit</Text>
-                            <View style={styles.aiModeBadge}>
-                              <Text style={styles.aiModeBadgeText}>{llmModeLabel}</Text>
+                            <View style={styles.aiPanelTitleWrap}>
+                              <Text style={styles.aiPanelEyebrow}>Study notes</Text>
+                              <Text style={styles.aiPanelTitle}>Make this word easier to keep</Text>
                             </View>
+                            {currentAiStudyKit ? (
+                              <Text style={styles.aiPanelMeta}>
+                                Updated {formatCompactTimestamp(currentAiStudyKit.generatedAt)}
+                              </Text>
+                            ) : null}
                           </View>
 
                           <Text style={styles.aiPanelCopy}>
                             {currentAiStudyKit
-                              ? `Cached ${formatTimestamp(currentAiStudyKit.generatedAt)}.`
-                              : llmHelp}
+                              ? `Keep ${currentCard.word} in plain language, one memory scene, and one quick self-check.`
+                              : `Create a calm study view for ${currentCard.word}: a clearer meaning, a visual cue, and one quick recall prompt.`}
                           </Text>
 
-                          {aiGenerationStatus ? (
+                          {aiGenerationStatus?.note ? (
                             <View style={styles.aiUsageCard}>
-                              <Text style={styles.aiUsageTitle}>
-                                {formatAiGenerationStatus(aiGenerationStatus)}
-                              </Text>
-                              {aiGenerationStatus.note ? (
-                                <Text style={styles.aiUsageCopy}>{aiGenerationStatus.note}</Text>
-                              ) : null}
+                              <Text style={styles.aiUsageCopy}>{aiGenerationStatus.note}</Text>
                             </View>
                           ) : null}
 
-                          {aiMessage ? (
+                          {aiMessage && aiMessageTone === 'error' ? (
                             <BannerCard
-                              tone={aiMessageTone}
-                              title={aiMessageTone === 'success' ? 'AI updated' : 'AI issue'}
+                              tone="error"
+                              title="Study notes issue"
                               copy={aiMessage}
                             />
                           ) : null}
 
-                          {llmMode === 'smart-coach' ? (
-                            <View style={styles.aiProviderStack}>
-                              {aiProviderOptions.map((option) => (
-                                <AiProviderCard key={option.id} option={option} />
-                              ))}
-                            </View>
-                          ) : null}
-
                           {currentAiStudyKit ? (
-                            <View style={styles.stack}>
-                              <AiMemorySceneCard
-                                word={currentCard.word}
-                                uri={currentAiStudyKit.memoryImageUri}
-                                prompt={currentAiStudyKit.memoryImagePrompt}
-                              />
-                              <AiInsightCard
-                                label="Explain simply"
-                                value={currentAiStudyKit.simplifiedDefinition}
-                              />
-                              <AiInsightCard
-                                label="Memory hook"
-                                value={currentAiStudyKit.memoryHook}
-                              />
-                              <AiInsightCard
-                                label="Quiz"
-                                value={`${currentAiStudyKit.quizQuestion}\nAnswer: ${currentAiStudyKit.quizAnswer}`}
-                              />
-                              <AiInsightCard
-                                label="Usage tip"
-                                value={currentAiStudyKit.usageTip}
-                              />
-                            </View>
-                          ) : null}
+                            <AiStudyNotesPanel word={currentCard.word} studyKit={currentAiStudyKit} />
+                          ) : (
+                            <AiStudyEmptyState word={currentCard.word} />
+                          )}
 
                           <Pressable
                             style={({ pressed }) => [
@@ -1524,10 +1484,10 @@ export default function App() {
                           >
                             <Text style={styles.aiActionLabel}>
                               {isAiLoading
-                                ? 'Generating study kit...'
+                                ? 'Building notes...'
                                 : currentAiStudyKit
-                                  ? 'Refresh AI study kit'
-                                  : 'Generate AI study kit'}
+                                  ? 'Refresh notes'
+                                  : 'Create study notes'}
                             </Text>
                           </Pressable>
                         </View>
@@ -2047,21 +2007,7 @@ export default function App() {
                         />
                       ) : null}
                       {selectedAiStudyKit ? (
-                        <>
-                          <AiMemorySceneCard
-                            word={selectedWord.word}
-                            uri={selectedAiStudyKit.memoryImageUri}
-                            prompt={selectedAiStudyKit.memoryImagePrompt}
-                          />
-                          <DetailBlock
-                            label="AI explain simply"
-                            value={selectedAiStudyKit.simplifiedDefinition}
-                          />
-                          <DetailBlock
-                            label="AI memory hook"
-                            value={selectedAiStudyKit.memoryHook}
-                          />
-                        </>
+                        <AiStudyNotesPanel word={selectedWord.word} studyKit={selectedAiStudyKit} />
                       ) : null}
                     </View>
                   )}
@@ -2073,7 +2019,7 @@ export default function App() {
                     />
                     <GhostButton label="Delete" onPress={handleDeleteWord} />
                     <GhostButton
-                      label={isAiLoading ? 'AI...' : 'AI Kit'}
+                      label={isAiLoading ? 'Notes...' : 'Study notes'}
                       onPress={() => void handleGenerateAiStudyKit(selectedWord, 'selected')}
                     />
                     <GhostButton label="Close" onPress={() => setSelectedWordId(null)} />
@@ -2510,6 +2456,67 @@ function AiInsightCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AiStudyNotesPanel({
+  word,
+  studyKit,
+}: {
+  word: string;
+  studyKit: AiStudyKit;
+}) {
+  return (
+    <View style={styles.aiStudySheet}>
+      <AiMemorySceneCard
+        word={word}
+        uri={studyKit.memoryImageUri}
+        prompt={studyKit.memoryImagePrompt}
+      />
+
+      <View style={styles.aiMeaningCard}>
+        <Text style={styles.aiMeaningEyebrow}>Hold onto the meaning</Text>
+        <Text style={styles.aiMeaningValue}>{studyKit.simplifiedDefinition}</Text>
+        <View style={styles.aiMeaningDivider} />
+        <Text style={styles.aiMeaningSupportLabel}>Memory cue</Text>
+        <Text style={styles.aiMeaningSupport}>{studyKit.memoryHook}</Text>
+      </View>
+
+      <View style={styles.aiLearningGrid}>
+        <View style={styles.aiLearningCard}>
+          <Text style={styles.aiLearningCardLabel}>Quick check</Text>
+          <Text style={styles.aiLearningCardValue}>{studyKit.quizQuestion}</Text>
+          <View style={styles.aiAnswerPill}>
+            <Text style={styles.aiAnswerPillLabel}>Answer</Text>
+            <Text style={styles.aiAnswerPillValue}>{studyKit.quizAnswer}</Text>
+          </View>
+        </View>
+
+        <View style={[styles.aiLearningCard, styles.aiLearningCardSoft]}>
+          <Text style={styles.aiLearningCardLabel}>Use it today</Text>
+          <Text style={styles.aiLearningCardValue}>{studyKit.usageTip}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function AiStudyEmptyState({ word }: { word: string }) {
+  return (
+    <View style={styles.aiStudyEmpty}>
+      <Text style={styles.aiStudyEmptyTitle}>Start with {word}</Text>
+      <Text style={styles.aiStudyEmptyCopy}>
+        Build a simpler meaning, a scene to picture, and one short recall prompt to help
+        the word stick faster.
+      </Text>
+      <View style={styles.aiStudyEmptyChipRow}>
+        {['Simple meaning', 'Memory cue', 'Quick recall'].map((item) => (
+          <View key={item} style={styles.aiStudyEmptyChip}>
+            <Text style={styles.aiStudyEmptyChipText}>{item}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function AiMemorySceneCard({
   word,
   uri,
@@ -2527,7 +2534,7 @@ function AiMemorySceneCard({
         <View style={styles.aiMemoryScenePlaceholder}>
           <View style={styles.aiMemorySceneGlowOne} />
           <View style={styles.aiMemorySceneGlowTwo} />
-          <Text style={styles.aiMemorySceneEyebrow}>Visual memory</Text>
+          <Text style={styles.aiMemorySceneEyebrow}>Picture this</Text>
           <Text style={styles.aiMemorySceneWord}>{word}</Text>
           <Text style={styles.aiMemoryScenePrompt}>
             {prompt?.trim() || 'Imagine a vivid scene that locks the word into memory.'}
@@ -2535,11 +2542,11 @@ function AiMemorySceneCard({
         </View>
       )}
       <View style={styles.aiMemoryImageCaption}>
-        <Text style={styles.aiMemoryImageLabel}>{uri ? 'Memory image' : 'Memory scene'}</Text>
+        <Text style={styles.aiMemoryImageLabel}>{uri ? 'Picture this' : 'Scene cue'}</Text>
         <Text style={styles.aiMemoryImageCopy}>
           {uri
             ? prompt?.trim() || 'A playful visual cue to help the word stick.'
-            : 'Generated from the AI scene prompt so the word still feels visual even without an image response.'}
+            : 'Keep this little scene in mind while you review the word.'}
         </Text>
       </View>
     </View>
@@ -2642,20 +2649,11 @@ function formatSnapshotSummary(summary: SnapshotImportSummary) {
   return `Backup restored. Added ${summary.addedCount} words, merged ${summary.mergedCount}, skipped ${summary.skippedCount}.`;
 }
 
-function formatTimestamp(value: string) {
-  return new Date(value).toLocaleString();
-}
-
-function formatAiGenerationStatus(status: AiGenerationStatus) {
-  if (
-    typeof status.dailyLimit === 'number' &&
-    typeof status.remainingToday === 'number'
-  ) {
-    const label = status.provider === 'smart-coach' ? 'Gemini Cloud' : status.providerLabel;
-    return `${label}: ${status.remainingToday} of ${status.dailyLimit} left today`;
-  }
-
-  return `${status.providerLabel} is active now`;
+function formatCompactTimestamp(value: string) {
+  return new Date(value).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function formatWeeklyActivityLabel(
@@ -3415,56 +3413,54 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   aiPanel: {
-    gap: 12,
-    borderRadius: 24,
-    backgroundColor: '#fffdfa',
+    gap: 14,
+    borderRadius: 26,
+    backgroundColor: '#f8faf6',
     borderWidth: 1,
-    borderColor: '#e7d8cf',
-    padding: 16,
+    borderColor: '#dbe5dc',
+    padding: 18,
   },
   aiPanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 10,
   },
-  aiPanelTitle: {
-    color: '#25314c',
-    fontSize: 18,
-    fontWeight: '800',
+  aiPanelTitleWrap: {
+    flex: 1,
+    gap: 4,
   },
-  aiModeBadge: {
-    borderRadius: 999,
-    backgroundColor: '#e9f4ff',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  aiModeBadgeText: {
-    color: '#3670a7',
+  aiPanelEyebrow: {
+    color: '#738579',
     fontSize: 11,
     fontWeight: '800',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
-  aiPanelCopy: {
-    color: '#6f748f',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  aiUsageCard: {
-    gap: 4,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#d5e8c8',
-    backgroundColor: '#f5fff0',
-    padding: 14,
-  },
-  aiUsageTitle: {
-    color: '#294b27',
-    fontSize: 14,
+  aiPanelTitle: {
+    color: '#223147',
+    fontSize: 20,
     fontWeight: '800',
   },
+  aiPanelMeta: {
+    color: '#768392',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  aiPanelCopy: {
+    color: '#586575',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  aiUsageCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#dce7dd',
+    backgroundColor: '#f3f8f3',
+    padding: 12,
+  },
   aiUsageCopy: {
-    color: '#5e7358',
+    color: '#587060',
     fontSize: 13,
     lineHeight: 19,
   },
@@ -3518,75 +3514,197 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
-  aiMemoryImageCard: {
-    overflow: 'hidden',
+  aiStudySheet: {
+    gap: 12,
+  },
+  aiStudyEmpty: {
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#f0dacb',
-    backgroundColor: '#fff9f4',
+    borderColor: '#dfe8dc',
+    backgroundColor: '#fcfdf9',
+    padding: 16,
+    gap: 10,
+  },
+  aiStudyEmptyTitle: {
+    color: '#25314c',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  aiStudyEmptyCopy: {
+    color: '#617082',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  aiStudyEmptyChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  aiStudyEmptyChip: {
+    borderRadius: 999,
+    backgroundColor: '#eef5ed',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  aiStudyEmptyChipText: {
+    color: '#55705c',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  aiMemoryImageCard: {
+    overflow: 'hidden',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#dde7de',
+    backgroundColor: '#fcfdf9',
   },
   aiMemoryImage: {
     width: '100%',
     aspectRatio: 4 / 3,
-    backgroundColor: '#f3eadf',
+    backgroundColor: '#edf1ea',
   },
   aiMemoryScenePlaceholder: {
     aspectRatio: 4 / 3,
     justifyContent: 'flex-end',
-    gap: 8,
+    gap: 10,
     overflow: 'hidden',
-    backgroundColor: '#fff0d9',
-    padding: 18,
+    backgroundColor: '#eef5ed',
+    padding: 20,
   },
   aiMemorySceneGlowOne: {
     position: 'absolute',
-    top: -24,
-    right: -18,
+    top: -18,
+    right: -10,
     height: 140,
     width: 140,
     borderRadius: 999,
-    backgroundColor: '#ffd67d',
+    backgroundColor: '#d9ebc8',
   },
   aiMemorySceneGlowTwo: {
     position: 'absolute',
-    bottom: -36,
-    left: -18,
+    bottom: -26,
+    left: -8,
     height: 120,
     width: 120,
     borderRadius: 999,
-    backgroundColor: '#ffc2b8',
+    backgroundColor: '#d5e7f6',
   },
   aiMemorySceneEyebrow: {
-    color: '#91615f',
+    color: '#6d7d6e',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   aiMemorySceneWord: {
-    color: '#2e3651',
-    fontSize: 28,
+    color: '#243247',
+    fontSize: 30,
     fontWeight: '900',
   },
   aiMemoryScenePrompt: {
-    color: '#4d5974',
+    color: '#586675',
     fontSize: 14,
     lineHeight: 21,
   },
   aiMemoryImageCaption: {
     gap: 6,
-    padding: 14,
+    padding: 16,
   },
   aiMemoryImageLabel: {
-    color: '#8a6f8c',
+    color: '#6d7d6e',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
   },
   aiMemoryImageCopy: {
-    color: '#4c5873',
+    color: '#576676',
     fontSize: 13,
     lineHeight: 20,
+  },
+  aiMeaningCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#dce6dc',
+    backgroundColor: '#fcfdf9',
+    padding: 16,
+    gap: 8,
+  },
+  aiMeaningEyebrow: {
+    color: '#748577',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  aiMeaningValue: {
+    color: '#243247',
+    fontSize: 20,
+    lineHeight: 28,
+    fontWeight: '800',
+  },
+  aiMeaningDivider: {
+    height: 1,
+    backgroundColor: '#e5ece4',
+    marginVertical: 2,
+  },
+  aiMeaningSupportLabel: {
+    color: '#7d7082',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  aiMeaningSupport: {
+    color: '#5b6579',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  aiLearningGrid: {
+    gap: 10,
+  },
+  aiLearningCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#dbe6df',
+    backgroundColor: '#f6faf7',
+    padding: 14,
+    gap: 8,
+  },
+  aiLearningCardSoft: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#dce3ea',
+  },
+  aiLearningCardLabel: {
+    color: '#718174',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  aiLearningCardValue: {
+    color: '#2b3750',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  aiAnswerPill: {
+    alignSelf: 'flex-start',
+    borderRadius: 16,
+    backgroundColor: '#e6f0e7',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  aiAnswerPillLabel: {
+    color: '#66766c',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  aiAnswerPillValue: {
+    color: '#233547',
+    fontSize: 14,
+    fontWeight: '800',
   },
   aiInsightCard: {
     backgroundColor: '#fff6ef',
@@ -3608,11 +3726,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
   },
   aiAction: {
-    borderRadius: 20,
-    backgroundColor: '#5291c9',
+    borderRadius: 18,
+    backgroundColor: '#6e8c80',
     borderWidth: 1,
-    borderColor: '#88bdf0',
-    paddingVertical: 14,
+    borderColor: '#8fa89f',
+    paddingVertical: 15,
     alignItems: 'center',
   },
   aiActionPressed: {
