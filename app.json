@@ -3,21 +3,55 @@
     "name": "Vocab Builder",
     "slug": "vocab-builder-mobile",
     "version": "1.0.0",
+    "description": "A smart vocabulary trainer with spaced repetition, daily review, imports, AI study support, and local-first progress tracking.",
+    "scheme": "vocabbuilder",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "primaryColor": "#ff8b56",
+    "backgroundColor": "#fff7ef",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#fff7ef"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rahulkumar.vocabbuilder",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
-    "android": {},
+    "android": {
+      "package": "com.rahulkumar.vocabbuilder",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#fff7ef"
+      }
+    },
     "web": {
-      "bundler": "metro"
-    }
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ff8b56",
+          "defaultChannel": "daily-review-reminders"
+        }
+      ]
+    ]
   }
 }

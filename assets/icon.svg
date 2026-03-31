@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="156" y1="96" x2="884" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8F60"/>
+      <stop offset="1" stop-color="#FFBF66"/>
+    </linearGradient>
+    <linearGradient id="card" x1="288" y1="236" x2="742" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF9F1"/>
+      <stop offset="1" stop-color="#FFE9CF"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#bg)"/>
+  <circle cx="774" cy="274" r="88" fill="#FFE4A8" fill-opacity="0.72"/>
+  <circle cx="272" cy="792" r="96" fill="#7EE0C7" fill-opacity="0.38"/>
+  <rect x="282" y="216" width="460" height="592" rx="112" fill="url(#card)"/>
+  <rect x="332" y="264" width="360" height="496" rx="86" fill="#23314D"/>
+  <path d="M430 384C430 355.281 453.281 332 482 332H544C572.719 332 596 355.281 596 384V510C596 539.823 579.769 567.289 553.634 581.719L527.7 596.046C517.982 601.415 506.018 601.415 496.3 596.046L470.366 581.719C444.231 567.289 428 539.823 428 510L430 384Z" fill="#FF9A67"/>
+  <rect x="392" y="636" width="240" height="26" rx="13" fill="#B7D9FF"/>
+  <rect x="392" y="686" width="182" height="26" rx="13" fill="#B7D9FF" fill-opacity="0.82"/>
+</svg>

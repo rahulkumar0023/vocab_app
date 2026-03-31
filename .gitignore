@@ -1,5 +1,12 @@
 node_modules/
 .expo/
 .expo-shared/
+.eas/
+.firebase/
+firebase-debug.log*
+.env
+.env.*
+!.env.example
+functions/node_modules/
 .DS_Store
 npm-debug.log*

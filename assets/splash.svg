@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1242" height="2436" viewBox="0 0 1242 2436" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="196" y1="188" x2="1028" y2="2278" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF6EC"/>
+      <stop offset="1" stop-color="#FFE7D6"/>
+    </linearGradient>
+    <linearGradient id="card" x1="406" y1="760" x2="834" y2="1308" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF996D"/>
+      <stop offset="1" stop-color="#FFBF66"/>
+    </linearGradient>
+  </defs>
+  <rect width="1242" height="2436" fill="url(#bg)"/>
+  <circle cx="958" cy="456" r="170" fill="#FFE4A8" fill-opacity="0.72"/>
+  <circle cx="274" cy="1924" r="192" fill="#86E3CE" fill-opacity="0.32"/>
+  <rect x="355" y="722" width="532" height="632" rx="152" fill="url(#card)"/>
+  <rect x="436" y="824" width="370" height="430" rx="114" fill="#23314D"/>
+  <path d="M504 964C504 927.549 533.549 898 570 898H672C708.451 898 738 927.549 738 964V1068C738 1105.85 717.395 1140.69 684.256 1158.98L626.378 1190.92C619.25 1194.85 610.75 1194.85 603.622 1190.92L545.744 1158.98C512.605 1140.69 492 1105.85 492 1068L504 964Z" fill="#FFF8F1"/>
+  <rect x="504" y="1288" width="236" height="28" rx="14" fill="#B7D9FF"/>
+  <rect x="504" y="1338" width="176" height="28" rx="14" fill="#B7D9FF" fill-opacity="0.82"/>
+  <text x="621" y="1548" text-anchor="middle" fill="#25314C" font-size="84" font-family="Helvetica Neue, Arial, sans-serif" font-weight="800">Today's Word</text>
+  <text x="621" y="1640" text-anchor="middle" fill="#7A6870" font-size="36" font-family="Helvetica Neue, Arial, sans-serif" font-weight="600">Build vocabulary with daily momentum.</text>
+</svg>
