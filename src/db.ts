@@ -16,6 +16,7 @@ export type VocabCard = ReviewSnapshot & {
   definition: string;
   example: string;
   createdAt: string;
+  isFavorite: boolean;
   source: WordSource;
   topic: string | null;
   partOfSpeech: string | null;
@@ -40,6 +41,7 @@ export type WordInput = {
   word: string;
   definition: string;
   example: string;
+  isFavorite?: boolean;
   source?: WordSource;
   topic?: string | null;
   partOfSpeech?: string | null;
@@ -55,6 +57,7 @@ type StoredWordInput = {
   word: string;
   definition: string;
   example: string;
+  isFavorite: boolean;
   source: WordSource;
   topic: string | null;
   partOfSpeech: string | null;
@@ -176,6 +179,7 @@ export async function initializeDatabase(db: SQLiteDatabase) {
       definition TEXT NOT NULL,
       example TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      is_favorite INTEGER NOT NULL DEFAULT 0,
       source TEXT,
       topic TEXT,
       part_of_speech TEXT,
@@ -257,6 +261,7 @@ export async function loadCards(db: SQLiteDatabase) {
     definition: string;
     example: string;
     createdAt: string;
+    isFavorite: number;
     source: string;
     topic: string | null;
     partOfSpeech: string | null;
@@ -280,6 +285,7 @@ export async function loadCards(db: SQLiteDatabase) {
       w.definition,
       w.example,
       w.created_at AS createdAt,
+      COALESCE(w.is_favorite, 0) AS isFavorite,
       COALESCE(w.source, 'manual') AS source,
       w.topic AS topic,
       w.part_of_speech AS partOfSpeech,
@@ -303,6 +309,7 @@ export async function loadCards(db: SQLiteDatabase) {
 
   return cards.map((card) => ({
     ...card,
+    isFavorite: card.isFavorite === 1,
     source: normalizeSource(card.source),
     synonyms: parseJsonList(card.synonymsJson),
     antonyms: parseJsonList(card.antonymsJson),
@@ -377,6 +384,21 @@ export async function updateWord(db: SQLiteDatabase, wordId: string, input: Word
   const sanitized = sanitizeWordInput(input);
 
   await updateWordRecord(db, wordId, sanitized);
+}
+
+export async function toggleWordFavorite(
+  db: SQLiteDatabase,
+  wordId: string,
+  isFavorite: boolean,
+) {
+  await db.runAsync(
+    `
+      UPDATE words
+      SET is_favorite = ?
+      WHERE id = ?
+    `,
+    [isFavorite ? 1 : 0, wordId],
+  );
 }
 
 export async function exportAppSnapshot(db: SQLiteDatabase): Promise<AppSnapshot> {
@@ -498,6 +520,7 @@ async function updateWordRecord(db: SQLiteDatabase, wordId: string, sanitized: S
         word = ?,
         definition = ?,
         example = ?,
+        is_favorite = ?,
         source = ?,
         topic = ?,
         part_of_speech = ?,
@@ -513,6 +536,7 @@ async function updateWordRecord(db: SQLiteDatabase, wordId: string, sanitized: S
       sanitized.word,
       sanitized.definition,
       sanitized.example,
+      sanitized.isFavorite ? 1 : 0,
       sanitized.source,
       sanitized.topic,
       sanitized.partOfSpeech,
@@ -710,6 +734,10 @@ async function ensureWordColumns(db: SQLiteDatabase) {
     await db.execAsync('ALTER TABLE words ADD COLUMN source TEXT');
   }
 
+  if (!existing.has('is_favorite')) {
+    await db.execAsync('ALTER TABLE words ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0');
+  }
+
   if (!existing.has('topic')) {
     await db.execAsync('ALTER TABLE words ADD COLUMN topic TEXT');
   }
@@ -788,6 +816,7 @@ async function seedUserProfile(db: SQLiteDatabase) {
 
 async function backfillExistingWords(db: SQLiteDatabase) {
   await db.execAsync(`
+    UPDATE words SET is_favorite = 0 WHERE is_favorite IS NULL;
     UPDATE words SET source = 'manual' WHERE source IS NULL;
     UPDATE words SET difficulty = CASE
       WHEN length(word) <= 7 THEN 'beginner'
@@ -831,6 +860,7 @@ async function insertWordRecord(
         definition,
         example,
         created_at,
+        is_favorite,
         source,
         topic,
         part_of_speech,
@@ -841,7 +871,7 @@ async function insertWordRecord(
         antonyms_json,
         extra_examples_json
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       id,
@@ -849,6 +879,7 @@ async function insertWordRecord(
       input.definition,
       input.example,
       createdAt,
+      input.isFavorite ? 1 : 0,
       input.source,
       input.topic,
       input.partOfSpeech,
@@ -902,6 +933,7 @@ function sanitizeWordInput(input: WordInput): StoredWordInput {
     word: normalizedWord,
     definition: input.definition.trim(),
     example: primaryExample,
+    isFavorite: Boolean(input.isFavorite),
     source: input.source ?? 'manual',
     topic: input.topic?.trim() || 'learning',
     partOfSpeech: input.partOfSpeech?.trim() || null,

@@ -40,6 +40,7 @@ import {
   reviewWord,
   saveAiStudyKit,
   saveUserProfile,
+  toggleWordFavorite,
   updateWord,
   type AiStudyKit,
   type ReviewLogEntry,
@@ -125,6 +126,7 @@ const queueModes: Array<{ label: string; value: QueueMode }> = [
 
 const libraryFilters: Array<{ label: string; value: LibraryFilter }> = [
   { label: 'All', value: 'all' },
+  { label: 'Favorites', value: 'favorites' },
   { label: 'New', value: 'new' },
   { label: 'Learning', value: 'learning' },
   { label: 'Mastered', value: 'mastered' },
@@ -201,6 +203,7 @@ export default function App() {
 
   const [currentAiStudyKit, setCurrentAiStudyKit] = useState<AiStudyKit | null>(null);
   const [selectedAiStudyKit, setSelectedAiStudyKit] = useState<AiStudyKit | null>(null);
+  const [favoriteStudyKits, setFavoriteStudyKits] = useState<Record<string, AiStudyKit>>({});
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [aiMessageTone, setAiMessageTone] = useState<'error' | 'success'>('success');
   const [aiGenerationStatus, setAiGenerationStatus] = useState<AiGenerationStatus | null>(null);
@@ -270,6 +273,23 @@ export default function App() {
   const sessionCards = getSessionCards(queueMode, cards, dueCards, logs, now);
   const currentCard = sessionCards[0] ?? null;
   const selectedWord = cards.find((card) => card.id === selectedWordId) ?? null;
+  const favoriteCards = [...cards]
+    .filter((card) => card.isFavorite)
+    .sort((left, right) => {
+      const dueBoost = Number(isDue(right.dueAt, now)) - Number(isDue(left.dueAt, now));
+
+      if (dueBoost !== 0) {
+        return dueBoost;
+      }
+
+      if (left.lapses !== right.lapses) {
+        return right.lapses - left.lapses;
+      }
+
+      return new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime();
+    });
+  const favoriteShowcaseCards = favoriteCards.slice(0, 3);
+  const favoriteShowcaseKey = favoriteShowcaseCards.map((card) => card.id).join('|');
 
   const reviewsToday = logs.filter((entry) => getDateKey(entry.reviewedAt) === todayKey).length;
   const todayMistakes = logs.filter(
@@ -289,7 +309,10 @@ export default function App() {
   );
   const progressPercent = Math.round(progressRatio * 100);
   const reviewsRemaining = Math.max(profile.dailyGoal - reviewsToday, 0);
-  const nextUpcoming = cards.find((card) => !isDue(card.dueAt, now)) ?? null;
+  const nextUpcoming =
+    cards.find((card) => !isDue(card.dueAt, now) && card.isFavorite) ??
+    cards.find((card) => !isDue(card.dueAt, now)) ??
+    null;
   const heroMomentumLabel =
     reviewsRemaining === 0
       ? 'Goal complete'
@@ -299,7 +322,7 @@ export default function App() {
     : dueCards.length > 0
       ? `${dueCards.length} words are waiting for a quick win.`
       : 'Import a fresh pack and turn this into a live study deck.';
-  const todaysWord = currentCard ?? dueCards[0] ?? nextUpcoming ?? cards[0] ?? null;
+  const todaysWord = currentCard ?? favoriteCards[0] ?? dueCards[0] ?? nextUpcoming ?? cards[0] ?? null;
   const heroTitleText = todaysWord?.word ?? 'Vocab Builder';
   const heroEyebrowText = todaysWord ? "Today's word" : 'Bright, steady learning';
   const heroSubtitleText = todaysWord
@@ -357,6 +380,12 @@ export default function App() {
 
   const focusCards = [...cards]
     .sort((left, right) => {
+      const favoriteBoost = Number(right.isFavorite) - Number(left.isFavorite);
+
+      if (favoriteBoost !== 0) {
+        return favoriteBoost;
+      }
+
       if (left.lapses !== right.lapses) {
         return right.lapses - left.lapses;
       }
@@ -369,6 +398,8 @@ export default function App() {
     const matchesFilter =
       libraryFilter === 'all'
         ? true
+        : libraryFilter === 'favorites'
+          ? card.isFavorite
         : libraryFilter === 'new'
           ? card.reps === 0
           : libraryFilter === 'learning'
@@ -481,6 +512,52 @@ export default function App() {
       isCancelled = true;
     };
   }, [selectedWord?.id, database]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function hydrateFavoriteStudyKits() {
+      if (!database || favoriteShowcaseCards.length === 0) {
+        setFavoriteStudyKits({});
+        return;
+      }
+
+      try {
+        const entries = await Promise.all(
+          favoriteShowcaseCards.map(async (card) => {
+            const studyKit = await loadAiStudyKit(database, card.id);
+            return [card.id, studyKit] as const;
+          }),
+        );
+
+        if (isCancelled) {
+          return;
+        }
+
+        const nextFavoriteStudyKits = entries.reduce<Record<string, AiStudyKit>>((accumulator, entry) => {
+          const [wordId, studyKit] = entry;
+
+          if (studyKit) {
+            accumulator[wordId] = studyKit;
+          }
+
+          return accumulator;
+        }, {});
+
+        setFavoriteStudyKits(nextFavoriteStudyKits);
+      } catch {
+        if (!isCancelled) {
+          setFavoriteStudyKits({});
+        }
+      }
+    }
+
+    void hydrateFavoriteStudyKits();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [database, favoriteShowcaseKey]);
 
   useEffect(() => {
     if (!selectedWord) {
@@ -792,6 +869,31 @@ export default function App() {
     }
   }
 
+  async function handleToggleFavorite(card: VocabCard) {
+    if (!database || isActionBusy) {
+      return;
+    }
+
+    const nextFavoriteState = !card.isFavorite;
+    setIsMutating(true);
+
+    try {
+      await toggleWordFavorite(database, card.id, nextFavoriteState);
+      await refreshData(database);
+      setImportSummary(
+        nextFavoriteState
+          ? `"${card.word}" is in favorites and will stay closer to the top of your study flow.`
+          : `"${card.word}" was removed from favorites.`,
+      );
+      await triggerSuccessHaptic();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      await triggerErrorHaptic();
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
   async function handleSaveEditedWord() {
     if (!database || !selectedWord || isActionBusy) {
       return;
@@ -809,11 +911,16 @@ export default function App() {
         word: editWord,
         definition: editDefinition,
         example: editExample,
+        isFavorite: selectedWord.isFavorite,
         source: selectedWord.source,
         topic: selectedWord.topic,
         partOfSpeech: selectedWord.partOfSpeech,
         difficulty: selectedWord.difficulty,
         pronunciation: selectedWord.pronunciation,
+        audioUrl: selectedWord.audioUrl,
+        synonyms: selectedWord.synonyms,
+        antonyms: selectedWord.antonyms,
+        extraExamples: selectedWord.extraExamples,
       });
       setIsEditingWord(false);
       await refreshData(database);
@@ -1205,6 +1312,7 @@ export default function App() {
                 <View style={styles.goalMetaRow}>
                   <MetaPill label="Mistakes today" value={String(todayMistakes.length)} />
                   <MetaPill label="Trouble words" value={String(troubleCount)} />
+                  <MetaPill label="Favorites" value={String(favoriteCards.length)} />
                   <MetaPill label="Practice" value={practiceMode} />
                 </View>
               </SectionCard>
@@ -1231,6 +1339,40 @@ export default function App() {
                     </Text>
                   </View>
                 ) : null}
+              </SectionCard>
+
+              <SectionCard
+                eyebrow="Keep nearby"
+                tone="mint"
+                title="Favorite Shelf"
+                description="Favorite words stay closer to the front of your study flow and live here as quick visual memory cards."
+              >
+                {favoriteShowcaseCards.length > 0 ? (
+                  <View style={styles.favoriteShelf}>
+                    {favoriteShowcaseCards.map((card) => (
+                      <FavoriteWordCard
+                        key={card.id}
+                        card={card}
+                        studyKit={favoriteStudyKits[card.id] ?? null}
+                        onOpen={() => setSelectedWordId(card.id)}
+                        onToggleFavorite={() => void handleToggleFavorite(card)}
+                      />
+                    ))}
+                  </View>
+                ) : (
+                  <View style={styles.favoriteEmptyCard}>
+                    <Text style={styles.favoriteEmptyTitle}>Save words you want extra time with</Text>
+                    <Text style={styles.favoriteEmptyCopy}>
+                      Favorite a word from the study card or library and it will surface earlier in sessions and stay pinned here.
+                    </Text>
+                    {currentCard ? (
+                      <GhostButton
+                        label={`Favorite ${currentCard.word}`}
+                        onPress={() => void handleToggleFavorite(currentCard)}
+                      />
+                    ) : null}
+                  </View>
+                )}
               </SectionCard>
 
               <SectionCard
@@ -1275,17 +1417,36 @@ export default function App() {
                       <View style={styles.studyBadge}>
                         <Text style={styles.studyBadgeText}>{getWordStatus(currentCard)}</Text>
                       </View>
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.iconButton,
-                          pressed && styles.iconButtonPressed,
-                        ]}
-                        onPress={() => void handlePlayPronunciation(currentCard)}
-                      >
-                        <Text style={styles.iconButtonLabel}>
-                          {currentCard.audioUrl ? 'Listen' : 'Speak'}
-                        </Text>
-                      </Pressable>
+                      <View style={styles.studyHeaderActions}>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.iconButton,
+                            currentCard.isFavorite && styles.favoriteIconButton,
+                            pressed && styles.iconButtonPressed,
+                          ]}
+                          onPress={() => void handleToggleFavorite(currentCard)}
+                        >
+                          <Text
+                            style={[
+                              styles.iconButtonLabel,
+                              currentCard.isFavorite && styles.favoriteIconButtonLabel,
+                            ]}
+                          >
+                            {currentCard.isFavorite ? 'Favorited' : 'Favorite'}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.iconButton,
+                            pressed && styles.iconButtonPressed,
+                          ]}
+                          onPress={() => void handlePlayPronunciation(currentCard)}
+                        >
+                          <Text style={styles.iconButtonLabel}>
+                            {currentCard.audioUrl ? 'Listen' : 'Speak'}
+                          </Text>
+                        </Pressable>
+                      </View>
                     </View>
 
                     {practiceMode === 'flashcard' ? (
@@ -1514,7 +1675,7 @@ export default function App() {
                 eyebrow="Spotlight"
                 tone="mint"
                 title="Focus Queue"
-                description="Tap a word to inspect it, edit it, or clean it up."
+                description="Tap a word to inspect it, edit it, favorite it, or clean it up."
               >
                 <View style={styles.stack}>
                   {focusCards.map((card) => (
@@ -1522,6 +1683,7 @@ export default function App() {
                       key={card.id}
                       title={card.word}
                       subtitle={card.definition}
+                      isFavorite={card.isFavorite}
                       meta={`${getWordStatus(card)} · ${formatDueLabel(card.dueAt)}`}
                       onPress={() => setSelectedWordId(card.id)}
                     />
@@ -1566,6 +1728,7 @@ export default function App() {
                         key={card.id}
                         title={card.word}
                         subtitle={card.definition}
+                        isFavorite={card.isFavorite}
                         meta={`${card.topic ?? 'learning'} · ${card.difficulty ?? 'mixed'} · ${getWordStatus(card)}`}
                         onPress={() => setSelectedWordId(card.id)}
                       />
@@ -1950,21 +2113,40 @@ export default function App() {
                 <>
                   <View style={styles.modalHeader}>
                     <Text style={styles.modalTitle}>{selectedWord.word}</Text>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.iconButton,
-                        pressed && styles.iconButtonPressed,
-                      ]}
-                      onPress={() => void handlePlayPronunciation(selectedWord)}
-                    >
-                      <Text style={styles.iconButtonLabel}>
-                        {selectedWord.audioUrl ? 'Listen' : 'Speak'}
-                      </Text>
-                    </Pressable>
+                    <View style={styles.modalHeaderActions}>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.iconButton,
+                          selectedWord.isFavorite && styles.favoriteIconButton,
+                          pressed && styles.iconButtonPressed,
+                        ]}
+                        onPress={() => void handleToggleFavorite(selectedWord)}
+                      >
+                        <Text
+                          style={[
+                            styles.iconButtonLabel,
+                            selectedWord.isFavorite && styles.favoriteIconButtonLabel,
+                          ]}
+                        >
+                          {selectedWord.isFavorite ? 'Favorited' : 'Favorite'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.iconButton,
+                          pressed && styles.iconButtonPressed,
+                        ]}
+                        onPress={() => void handlePlayPronunciation(selectedWord)}
+                      >
+                        <Text style={styles.iconButtonLabel}>
+                          {selectedWord.audioUrl ? 'Listen' : 'Speak'}
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
 
                   <Text style={styles.modalMeta}>
-                    {selectedWord.partOfSpeech ?? 'word'} · {selectedWord.source} · {selectedWord.topic} · {selectedWord.difficulty ?? 'mixed'}
+                    {selectedWord.partOfSpeech ?? 'word'} · {selectedWord.source} · {selectedWord.topic} · {selectedWord.difficulty ?? 'mixed'}{selectedWord.isFavorite ? ' · favorite' : ''}
                   </Text>
 
                   {isEditingWord ? (
@@ -1990,6 +2172,14 @@ export default function App() {
                       <DetailBlock
                         label="Review stats"
                         value={`Status: ${getWordStatus(selectedWord)} · Reps: ${selectedWord.reps} · Lapses: ${selectedWord.lapses}`}
+                      />
+                      <DetailBlock
+                        label="Favorite"
+                        value={
+                          selectedWord.isFavorite
+                            ? 'This word is pinned higher in your study flow and home shelf.'
+                            : 'Not favorited yet.'
+                        }
                       />
                       {selectedWord.pronunciation ? (
                         <DetailBlock label="Pronunciation" value={selectedWord.pronunciation} />
@@ -2416,11 +2606,13 @@ function WordRow({
   title,
   subtitle,
   meta,
+  isFavorite,
   onPress,
 }: {
   title: string;
   subtitle: string;
   meta: string;
+  isFavorite?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -2429,12 +2621,86 @@ function WordRow({
       onPress={onPress}
     >
       <View style={styles.wordRowHeader}>
-        <Text style={styles.wordRowTitle}>{title}</Text>
+        <View style={styles.wordRowTitleWrap}>
+          <Text style={styles.wordRowTitle}>{title}</Text>
+          {isFavorite ? (
+            <View style={styles.wordRowFavoriteBadge}>
+              <Text style={styles.wordRowFavoriteBadgeText}>Favorite</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={styles.wordRowOpen}>Open</Text>
       </View>
       <Text style={styles.wordRowSubtitle}>{subtitle}</Text>
       <Text style={styles.wordRowMeta}>{meta}</Text>
     </Pressable>
+  );
+}
+
+function FavoriteWordCard({
+  card,
+  studyKit,
+  onOpen,
+  onToggleFavorite,
+}: {
+  card: VocabCard;
+  studyKit: AiStudyKit | null;
+  onOpen: () => void;
+  onToggleFavorite: () => void;
+}) {
+  const fallbackScene = buildFavoriteSceneCopy(card.word, card.topic, studyKit?.memoryImagePrompt);
+  const studyCopy = studyKit?.simplifiedDefinition || card.definition;
+
+  return (
+    <View style={styles.favoriteWordCard}>
+      <Pressable
+        style={({ pressed }) => [styles.favoriteWordVisual, pressed && styles.favoriteWordCardPressed]}
+        onPress={onOpen}
+      >
+        {studyKit?.memoryImageUri ? (
+          <Image source={{ uri: studyKit.memoryImageUri }} style={styles.favoriteWordImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.favoriteWordPlaceholder}>
+            <View style={styles.favoriteWordGlowTop} />
+            <View style={styles.favoriteWordGlowBottom} />
+            <Text style={styles.favoriteWordEyebrow}>Funny cue</Text>
+            <Text style={styles.favoriteWordHeadline}>{card.word}</Text>
+            <Text style={styles.favoriteWordScene}>{fallbackScene}</Text>
+          </View>
+        )}
+      </Pressable>
+
+      <View style={styles.favoriteWordBody}>
+        <View style={styles.favoriteWordTopRow}>
+          <View style={styles.favoriteWordCopy}>
+            <Text style={styles.favoriteWordTitle}>{card.word}</Text>
+            <Text style={styles.favoriteWordMeta}>
+              {getWordStatus(card)} · {formatDueLabel(card.dueAt)}
+            </Text>
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.favoriteToggleChip,
+              pressed && styles.favoriteToggleChipPressed,
+            ]}
+            onPress={onToggleFavorite}
+          >
+            <Text style={styles.favoriteToggleChipLabel}>Favorited</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.favoriteWordDefinition} numberOfLines={3}>
+          {studyCopy}
+        </Text>
+
+        <View style={styles.favoriteWordFooter}>
+          <Text style={styles.favoriteWordFooterCopy}>
+            {studyKit?.usageTip || `Keep ${card.word} nearby for quicker recall.`}
+          </Text>
+          <GhostButton label="Open card" onPress={onOpen} />
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -2576,6 +2842,23 @@ function AdjusterRow({
       </View>
     </View>
   );
+}
+
+function buildFavoriteSceneCopy(word: string, topic: string | null, memoryPrompt?: string | null) {
+  if (memoryPrompt?.trim()) {
+    return memoryPrompt.trim();
+  }
+
+  const mascots = ['otter', 'robot', 'fox', 'astronaut', 'painter', 'skater'];
+  const props = ['oversized flashcards', 'floating notebooks', 'comically large pencils', 'sticky notes everywhere', 'a tiny stage spotlight', 'a bouncing suitcase'];
+  const moods = ['cheerful', 'dramatic', 'playful', 'sunny', 'slightly chaotic', 'storybook'];
+  const seed = [...word.toLowerCase()].reduce((total, character) => total + character.charCodeAt(0), 0);
+  const mascot = mascots[seed % mascots.length];
+  const prop = props[(seed + 2) % props.length];
+  const mood = moods[(seed + 4) % moods.length];
+  const topicHint = topic ? ` in a ${topic} scene` : '';
+
+  return `Picture a ${mood} ${mascot}${topicHint} acting out "${word}" with ${prop}.`;
 }
 
 function getDateKey(value: string | Date) {
@@ -3214,6 +3497,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  studyHeaderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
   studyBadge: {
     borderRadius: 999,
     backgroundColor: '#ffe2d2',
@@ -3234,6 +3523,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
+  favoriteIconButton: {
+    backgroundColor: '#fff0e4',
+    borderColor: '#ffbb8d',
+  },
   iconButtonPressed: {
     opacity: 0.8,
   },
@@ -3241,6 +3534,9 @@ const styles = StyleSheet.create({
     color: '#7d4c38',
     fontWeight: '800',
     fontSize: 13,
+  },
+  favoriteIconButtonLabel: {
+    color: '#bc5d2e',
   },
   studyPromptLabel: {
     color: '#b8d8ff',
@@ -3741,6 +4037,151 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
+  favoriteShelf: {
+    gap: 12,
+  },
+  favoriteEmptyCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#dbe8df',
+    backgroundColor: '#f9fcfa',
+    padding: 18,
+    gap: 10,
+  },
+  favoriteEmptyTitle: {
+    color: '#243247',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  favoriteEmptyCopy: {
+    color: '#607083',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  favoriteWordCard: {
+    overflow: 'hidden',
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#dde6e0',
+    backgroundColor: '#fffdfb',
+    shadowColor: '#d3b29d',
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    elevation: 2,
+  },
+  favoriteWordVisual: {
+    backgroundColor: '#eef5ed',
+  },
+  favoriteWordCardPressed: {
+    opacity: 0.9,
+  },
+  favoriteWordImage: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    backgroundColor: '#edf3ed',
+  },
+  favoriteWordPlaceholder: {
+    aspectRatio: 16 / 9,
+    justifyContent: 'flex-end',
+    gap: 8,
+    padding: 18,
+    overflow: 'hidden',
+    backgroundColor: '#eef6f2',
+  },
+  favoriteWordGlowTop: {
+    position: 'absolute',
+    top: -30,
+    right: -10,
+    width: 150,
+    height: 150,
+    borderRadius: 999,
+    backgroundColor: '#ffe2be',
+  },
+  favoriteWordGlowBottom: {
+    position: 'absolute',
+    bottom: -22,
+    left: -8,
+    width: 120,
+    height: 120,
+    borderRadius: 999,
+    backgroundColor: '#cfe5f7',
+  },
+  favoriteWordEyebrow: {
+    color: '#6f7f76',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  favoriteWordHeadline: {
+    color: '#243247',
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  favoriteWordScene: {
+    color: '#586877',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  favoriteWordBody: {
+    gap: 12,
+    padding: 16,
+  },
+  favoriteWordTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  favoriteWordCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  favoriteWordTitle: {
+    color: '#243247',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  favoriteWordMeta: {
+    color: '#7b7b8b',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  favoriteToggleChip: {
+    borderRadius: 999,
+    backgroundColor: '#fff0e4',
+    borderWidth: 1,
+    borderColor: '#ffc29c',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  favoriteToggleChipPressed: {
+    opacity: 0.8,
+  },
+  favoriteToggleChipLabel: {
+    color: '#c06435',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  favoriteWordDefinition: {
+    color: '#526070',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  favoriteWordFooter: {
+    gap: 10,
+  },
+  favoriteWordFooterCopy: {
+    color: '#667485',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   emptyState: {
     backgroundColor: '#fff8f2',
     borderRadius: 24,
@@ -3915,10 +4356,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  wordRowTitleWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   wordRowTitle: {
     color: '#25314c',
     fontSize: 18,
     fontWeight: '800',
+  },
+  wordRowFavoriteBadge: {
+    borderRadius: 999,
+    backgroundColor: '#fff0e4',
+    borderWidth: 1,
+    borderColor: '#ffc29c',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  wordRowFavoriteBadgeText: {
+    color: '#c06435',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
   },
   wordRowOpen: {
     color: '#ff8b56',
@@ -4008,6 +4471,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
+  },
+  modalHeaderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
   },
   modalTitle: {
     flex: 1,

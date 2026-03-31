@@ -2,7 +2,7 @@ import type { ReviewLogEntry, VocabCard } from './db';
 
 export type PracticeMode = 'flashcard' | 'choices' | 'typing' | 'context' | 'usage';
 export type QueueMode = 'due' | 'mistakes' | 'all';
-export type LibraryFilter = 'all' | 'new' | 'learning' | 'mastered' | 'trouble';
+export type LibraryFilter = 'all' | 'favorites' | 'new' | 'learning' | 'mastered' | 'trouble';
 
 export function buildMultipleChoiceOptions(currentCard: VocabCard, cards: VocabCard[]) {
   const distractors = cards
@@ -68,7 +68,7 @@ export function getSessionCards(
   now = new Date(),
 ) {
   if (queueMode === 'all') {
-    return cards;
+    return sortSessionCards(cards);
   }
 
   if (queueMode === 'mistakes') {
@@ -79,10 +79,10 @@ export function getSessionCards(
         .map((entry) => entry.wordId),
     );
 
-    return cards.filter((card) => mistakenIds.has(card.id));
+    return sortSessionCards(cards.filter((card) => mistakenIds.has(card.id)));
   }
 
-  return dueCards;
+  return sortSessionCards(dueCards);
 }
 
 export function getWordStatus(card: VocabCard) {
@@ -130,6 +130,28 @@ function getDifficultyWeight(difficulty: VocabCard['difficulty']) {
     default:
       return 2;
   }
+}
+
+function sortSessionCards(cards: VocabCard[]) {
+  return [...cards].sort((left, right) => {
+    const favoriteBoost = Number(right.isFavorite) - Number(left.isFavorite);
+
+    if (favoriteBoost !== 0) {
+      return favoriteBoost;
+    }
+
+    const dueGap = new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime();
+
+    if (dueGap !== 0) {
+      return dueGap;
+    }
+
+    if (left.lapses !== right.lapses) {
+      return right.lapses - left.lapses;
+    }
+
+    return left.word.localeCompare(right.word);
+  });
 }
 
 function normalizeAnswer(value: string) {
