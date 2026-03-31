@@ -44,10 +44,4 @@ npm run ios
 
 If you still see `xcrun simctl ... code: 69`, it usually means Xcode/CLI tools are not fully installed or selected.
 
-## Scripts
 
-- `npm run start` — start Expo dev server.
-- `npm run android` — open Android build.
-- `npm run ios` — open iOS build.
-- `npm run web` — open web preview.
-- `npm run typecheck` — run TypeScript checks.
