@@ -22,7 +22,7 @@ export async function ensureFirebaseDeviceId() {
   return nextId;
 }
 
-export function getFirebaseFunctionUrl(functionName: 'generateStudyKit') {
+export function getFirebaseFunctionUrl(functionName: 'generateStudyKit' | 'extractWordsFromScreenshot') {
   const emulatorHost = process.env.EXPO_PUBLIC_FIREBASE_FUNCTIONS_EMULATOR_HOST?.trim();
   const projectId = readProjectId();
 

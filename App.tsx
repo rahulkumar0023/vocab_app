@@ -1,5 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { Audio } from 'expo-av';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { type SQLiteDatabase } from 'expo-sqlite';
 import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
@@ -89,6 +91,7 @@ import {
   fetchTopicWords,
   type ImportDifficulty,
 } from './src/services/wordFeed';
+import { extractWordsFromScreenshot } from './src/services/screenshotImport';
 import {
   buildHardestWords,
   buildTopicRetention,
@@ -173,6 +176,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isScreenshotImporting, setIsScreenshotImporting] = useState(false);
   const [isWordLookupLoading, setIsWordLookupLoading] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
@@ -193,6 +197,7 @@ export default function App() {
   const [newExample, setNewExample] = useState('');
   const [lookedUpWord, setLookedUpWord] = useState<WordInput | null>(null);
   const [lookupMessage, setLookupMessage] = useState<string | null>(null);
+  const [screenshotImportMessage, setScreenshotImportMessage] = useState<string | null>(null);
   const [importTopic, setImportTopic] = useState('learning');
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -265,6 +270,7 @@ export default function App() {
   const isActionBusy =
     isMutating ||
     isImporting ||
+    isScreenshotImporting ||
     isWordLookupLoading ||
     isAiLoading ||
     isProfileSaving ||
@@ -827,6 +833,7 @@ export default function App() {
     setIsImporting(true);
     setErrorMessage(null);
     setImportSummary(null);
+    setScreenshotImportMessage(null);
 
     try {
       const summary = await runTopicImport();
@@ -846,6 +853,61 @@ export default function App() {
       await triggerErrorHaptic();
     } finally {
       setIsImporting(false);
+    }
+  }
+
+  async function handleScreenshotImport() {
+    if (!database || isActionBusy) {
+      return;
+    }
+
+    setIsScreenshotImporting(true);
+    setErrorMessage(null);
+    setImportSummary(null);
+    setScreenshotImportMessage(null);
+
+    try {
+      const selection = await DocumentPicker.getDocumentAsync({
+        type: 'image/*',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      if (selection.canceled) {
+        return;
+      }
+
+      const screenshot = selection.assets[0];
+
+      if (!screenshot?.uri) {
+        throw new Error('Could not read the selected screenshot.');
+      }
+
+      const imageBase64 = await FileSystem.readAsStringAsync(screenshot.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const extractedWords = await extractWordsFromScreenshot({
+        imageBase64,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.name,
+        maxWords: importBatchSize,
+      });
+      const summary = await importWords(database, extractedWords);
+
+      await refreshData(database);
+      setImportSummary(
+        `Screenshot import complete: added ${summary.addedCount}, skipped ${summary.duplicateCount} duplicates.`,
+      );
+      setScreenshotImportMessage(
+        `Detected ${extractedWords.length} important words from your screenshot.`,
+      );
+      setActiveTab('today');
+      await triggerSuccessHaptic();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      await triggerErrorHaptic();
+    } finally {
+      setIsScreenshotImporting(false);
     }
   }
 
@@ -1925,6 +1987,26 @@ export default function App() {
                       {isImporting ? 'Importing words...' : `Import ${importBatchSize} new words`}
                     </Text>
                   </Pressable>
+                  <Text style={styles.controlLabel}>From a screenshot</Text>
+                  <Text style={styles.inlineHint}>
+                    Upload a screenshot of highlighted words from a book page. AI will extract key terms for your deck.
+                  </Text>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.secondaryAction,
+                      pressed && styles.secondaryActionPressed,
+                      isActionBusy && styles.actionDisabled,
+                    ]}
+                    disabled={isActionBusy}
+                    onPress={() => void handleScreenshotImport()}
+                  >
+                    <Text style={styles.secondaryActionLabel}>
+                      {isScreenshotImporting ? 'Reading screenshot...' : 'Import from screenshot'}
+                    </Text>
+                  </Pressable>
+                  {screenshotImportMessage ? (
+                    <Text style={styles.inlineHint}>{screenshotImportMessage}</Text>
+                  ) : null}
                 </View>
               </SectionCard>
 

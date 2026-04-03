@@ -53,6 +53,42 @@ const studyKitSchema = {
   additionalProperties: false,
 };
 
+const screenshotWordsSchema = {
+  type: 'object',
+  properties: {
+    words: {
+      type: 'array',
+      maxItems: 12,
+      items: {
+        type: 'object',
+        properties: {
+          word: {
+            type: 'string',
+            description: 'The extracted vocabulary word from the screenshot.',
+          },
+          definition: {
+            type: 'string',
+            description: 'A short learner-friendly definition for the word.',
+          },
+          example: {
+            type: 'string',
+            description: 'One concise sentence showing how the word is used.',
+          },
+          difficulty: {
+            type: 'string',
+            enum: ['beginner', 'intermediate', 'advanced'],
+            description: 'Estimated learner difficulty for this word.',
+          },
+        },
+        required: ['word', 'definition', 'example', 'difficulty'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['words'],
+  additionalProperties: false,
+};
+
 export const generateStudyKit = onRequest(
   {
     region: REGION,
@@ -136,6 +172,36 @@ export const generateStudyKit = onRequest(
   },
 );
 
+export const extractWordsFromScreenshot = onRequest(
+  {
+    region: REGION,
+    timeoutSeconds: 30,
+    memory: '256MiB',
+    cors: true,
+    secrets: [geminiApiKey],
+  },
+  async (request, response) => {
+    if (request.method !== 'POST') {
+      response.status(405).json({ error: 'Method not allowed.' });
+      return;
+    }
+
+    try {
+      const input = parseScreenshotInput(request.body);
+      const words = await extractScreenshotWords(input, geminiApiKey.value());
+      response.json({
+        words,
+        provider: 'gemini',
+      });
+    } catch (error) {
+      response.status(400).json({
+        error: error.message || 'Could not extract words from screenshot.',
+        provider: 'gemini',
+      });
+    }
+  },
+);
+
 function parseCardInput(data) {
   const word = asRequiredString(data?.word, 'word');
   const definition = asRequiredString(data?.definition, 'definition');
@@ -145,6 +211,22 @@ function parseCardInput(data) {
     word,
     definition,
     example,
+  };
+}
+
+function parseScreenshotInput(data) {
+  const imageBase64 = asRequiredString(data?.imageBase64, 'imageBase64');
+  const mimeType = normalizeScreenshotMimeType(data?.mimeType);
+  const fileName = typeof data?.fileName === 'string' ? data.fileName.trim() : '';
+  const maxWords = Number.isFinite(data?.maxWords)
+    ? Math.max(3, Math.min(12, Number(data.maxWords)))
+    : 10;
+
+  return {
+    imageBase64,
+    mimeType,
+    fileName,
+    maxWords,
   };
 }
 
@@ -331,6 +413,119 @@ async function generateGeminiMemoryImage(imagePrompt, apiKey) {
   }
 
   throw new Error('Gemini returned no mnemonic image.');
+}
+
+async function extractScreenshotWords(input, apiKey) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: buildScreenshotExtractionPrompt(input.maxWords, input.fileName),
+              },
+              {
+                inlineData: {
+                  mimeType: input.mimeType,
+                  data: input.imageBase64,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 700,
+          responseMimeType: 'application/json',
+          responseJsonSchema: screenshotWordsSchema,
+        },
+      }),
+    },
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `Gemini request failed with ${response.status}.`);
+  }
+
+  const outputText = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (typeof outputText !== 'string' || outputText.trim().length === 0) {
+    throw new Error('Gemini returned no extracted words.');
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(outputText);
+  } catch {
+    throw new Error('Gemini returned invalid JSON for screenshot extraction.');
+  }
+
+  const normalizedWords = (parsed?.words ?? [])
+    .map((word) => normalizeExtractedWord(word))
+    .filter(Boolean);
+
+  if (normalizedWords.length === 0) {
+    throw new Error('No clear vocabulary words were detected in this screenshot.');
+  }
+
+  return normalizedWords;
+}
+
+function normalizeExtractedWord(candidate) {
+  const word = typeof candidate?.word === 'string' ? candidate.word.trim() : '';
+  const definition = typeof candidate?.definition === 'string' ? candidate.definition.trim() : '';
+  const example = typeof candidate?.example === 'string' ? candidate.example.trim() : '';
+  const difficulty = normalizeDifficulty(candidate?.difficulty);
+
+  if (!word || !definition || !example || !difficulty) {
+    return null;
+  }
+
+  return {
+    word,
+    definition,
+    example,
+    difficulty,
+  };
+}
+
+function normalizeDifficulty(value) {
+  return value === 'beginner' || value === 'intermediate' || value === 'advanced' ? value : null;
+}
+
+function normalizeScreenshotMimeType(value) {
+  if (value === 'image/jpeg' || value === 'image/jpg') {
+    return 'image/jpeg';
+  }
+
+  if (value === 'image/webp') {
+    return 'image/webp';
+  }
+
+  return 'image/png';
+}
+
+function buildScreenshotExtractionPrompt(maxWords, fileName) {
+  return [
+    'You are helping an English learner build a vocabulary deck from a book screenshot.',
+    `Extract up to ${maxWords} important words that appear highlighted, marked, or contextually significant.`,
+    'Prefer uncommon or learnable vocabulary over simple connector words.',
+    'If highlighted words are visible, prioritize them.',
+    'Return JSON only that matches the schema.',
+    'For each word, provide a concise definition, one natural example sentence, and difficulty level.',
+    fileName ? `Screenshot file name: ${fileName}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildPrompt(card) {
