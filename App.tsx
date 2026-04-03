@@ -1,6 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Audio } from 'expo-av';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { type SQLiteDatabase } from 'expo-sqlite';
 import * as Speech from 'expo-speech';
@@ -92,6 +94,7 @@ import {
   fetchTopicWords,
   type ImportDifficulty,
 } from './src/services/wordFeed';
+import { extractWordsFromScreenshot } from './src/services/screenshotImport';
 import {
   buildHardestWords,
   buildTopicRetention,
@@ -196,6 +199,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isScreenshotImporting, setIsScreenshotImporting] = useState(false);
   const [isWordLookupLoading, setIsWordLookupLoading] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
@@ -217,6 +221,7 @@ export default function App() {
   const [newExample, setNewExample] = useState('');
   const [lookedUpWord, setLookedUpWord] = useState<WordInput | null>(null);
   const [lookupMessage, setLookupMessage] = useState<string | null>(null);
+  const [screenshotImportMessage, setScreenshotImportMessage] = useState<string | null>(null);
   const [importTopic, setImportTopic] = useState('learning');
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -297,6 +302,7 @@ export default function App() {
   const isActionBusy =
     isMutating ||
     isImporting ||
+    isScreenshotImporting ||
     isWordLookupLoading ||
     isAiLoading ||
     isProfileSaving ||
@@ -865,6 +871,7 @@ export default function App() {
     setIsImporting(true);
     setErrorMessage(null);
     setImportSummary(null);
+    setScreenshotImportMessage(null);
 
     try {
       const summary = await runTopicImport();
@@ -884,6 +891,61 @@ export default function App() {
       await triggerErrorHaptic();
     } finally {
       setIsImporting(false);
+    }
+  }
+
+  async function handleScreenshotImport() {
+    if (!database || isActionBusy) {
+      return;
+    }
+
+    setIsScreenshotImporting(true);
+    setErrorMessage(null);
+    setImportSummary(null);
+    setScreenshotImportMessage(null);
+
+    try {
+      const selection = await DocumentPicker.getDocumentAsync({
+        type: 'image/*',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      if (selection.canceled) {
+        return;
+      }
+
+      const screenshot = selection.assets[0];
+
+      if (!screenshot?.uri) {
+        throw new Error('Could not read the selected screenshot.');
+      }
+
+      const imageBase64 = await FileSystem.readAsStringAsync(screenshot.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const extractedWords = await extractWordsFromScreenshot({
+        imageBase64,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.name,
+        maxWords: importBatchSize,
+      });
+      const summary = await importWords(database, extractedWords);
+
+      await refreshData(database);
+      setImportSummary(
+        `Screenshot import complete: added ${summary.addedCount}, skipped ${summary.duplicateCount} duplicates.`,
+      );
+      setScreenshotImportMessage(
+        `Detected ${extractedWords.length} important words from your screenshot.`,
+      );
+      setActiveTab('today');
+      await triggerSuccessHaptic();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      await triggerErrorHaptic();
+    } finally {
+      setIsScreenshotImporting(false);
     }
   }
 
@@ -1171,122 +1233,6 @@ export default function App() {
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       await triggerErrorHaptic();
-    }
-  }
-
-  async function persistAccountSession(nextSession: AccountSession) {
-    await saveAccountSession(nextSession);
-    setAccountSession(nextSession);
-  }
-
-  async function handleSignInAsGuest() {
-    if (isAccountBusy) {
-      return;
-    }
-
-    setIsAccountBusy(true);
-
-    try {
-      const nextSession = createGuestAccountSession();
-      await persistAccountSession(nextSession);
-      setImportSummary('Guest mode is active. Your progress stays on this device.');
-      await triggerSuccessHaptic();
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error));
-      await triggerErrorHaptic();
-    } finally {
-      setIsAccountBusy(false);
-    }
-  }
-
-  async function handleSignInWithApple() {
-    if (!isAppleSignInAvailable || isAccountBusy) {
-      return;
-    }
-
-    setIsAccountBusy(true);
-
-    try {
-      const credential = await AppleAuthentication.signInAsync({
-        requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL,
-        ],
-      });
-      const nextSession = createAppleAccountSession({
-        appleUserId: credential.user,
-        email: credential.email,
-        fullName: formatAppleFullName(credential.fullName),
-        previousSession: accountSession,
-      });
-
-      await persistAccountSession(nextSession);
-      setImportSummary(`Signed in with Apple as ${nextSession.displayName}.`);
-      await triggerSuccessHaptic();
-    } catch (error) {
-      if (error instanceof Error && error.message === 'ERR_REQUEST_CANCELED') {
-        return;
-      }
-
-      setErrorMessage(getErrorMessage(error));
-      await triggerErrorHaptic();
-    } finally {
-      setIsAccountBusy(false);
-    }
-  }
-
-  async function handleSignInWithDevice() {
-    if (!deviceAuthState.available || isAccountBusy) {
-      return;
-    }
-
-    setIsAccountBusy(true);
-
-    try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: `Continue with ${deviceAuthState.label}`,
-        cancelLabel: 'Not now',
-        fallbackLabel: 'Use device passcode',
-      });
-
-      if (!result.success) {
-        if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
-          throw new Error('Device unlock did not complete.');
-        }
-
-        return;
-      }
-
-      const nextSession = createDeviceAccountSession(deviceAuthState.label, accountSession);
-      await persistAccountSession(nextSession);
-      setImportSummary(`${deviceAuthState.label} is now your quick sign-in option on this device.`);
-      await triggerSuccessHaptic();
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error));
-      await triggerErrorHaptic();
-    } finally {
-      setIsAccountBusy(false);
-    }
-  }
-
-  async function handleRemoveSavedAccount() {
-    if (isAccountBusy) {
-      return;
-    }
-
-    setIsAccountBusy(true);
-
-    try {
-      await clearAccountSession();
-      const nextSession = createGuestAccountSession();
-      await persistAccountSession(nextSession);
-      setImportSummary('Signed-out account details removed. Guest mode is active again.');
-      await triggerSuccessHaptic();
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error));
-      await triggerErrorHaptic();
-    } finally {
-      setIsAccountBusy(false);
     }
   }
 
@@ -2079,6 +2025,26 @@ export default function App() {
                       {isImporting ? 'Importing words...' : `Import ${importBatchSize} new words`}
                     </Text>
                   </Pressable>
+                  <Text style={styles.controlLabel}>From a screenshot</Text>
+                  <Text style={styles.inlineHint}>
+                    Upload a screenshot of highlighted words from a book page. AI will extract key terms for your deck.
+                  </Text>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.secondaryAction,
+                      pressed && styles.secondaryActionPressed,
+                      isActionBusy && styles.actionDisabled,
+                    ]}
+                    disabled={isActionBusy}
+                    onPress={() => void handleScreenshotImport()}
+                  >
+                    <Text style={styles.secondaryActionLabel}>
+                      {isScreenshotImporting ? 'Reading screenshot...' : 'Import from screenshot'}
+                    </Text>
+                  </Pressable>
+                  {screenshotImportMessage ? (
+                    <Text style={styles.inlineHint}>{screenshotImportMessage}</Text>
+                  ) : null}
                 </View>
               </SectionCard>
 
@@ -2149,102 +2115,6 @@ export default function App() {
 
           {activeTab === 'profile' ? (
             <>
-              <SectionCard
-                eyebrow="Account"
-                tone="mint"
-                title="Simple Sign In"
-                description={
-                  isSignedIn
-                    ? 'Your quick sign-in is saved on this device.'
-                    : 'Keep access lightweight on this device with Apple, biometrics, or guest mode.'
-                }
-              >
-                <View style={styles.accountCard}>
-                  <View style={styles.accountBadgeRow}>
-                    <View style={styles.accountBadge}>
-                      <Text style={styles.accountBadgeText}>
-                        {accountSession?.providerLabel ?? 'Guest'}
-                      </Text>
-                    </View>
-                    <Text style={styles.accountSignedAt}>
-                      {accountSession ? `Saved ${formatAccountSignedInLabel(accountSession.signedInAt)}` : 'Not signed in'}
-                    </Text>
-                  </View>
-                  <Text style={styles.accountTitle}>{accountTitle}</Text>
-                  <Text style={styles.accountCopy}>{accountMeta}</Text>
-                </View>
-
-                {!isSignedIn ? (
-                  <View style={styles.accountActionStack}>
-                    {isAppleSignInAvailable ? (
-                      <AppleAuthentication.AppleAuthenticationButton
-                        buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                        cornerRadius={18}
-                        style={styles.appleButton}
-                        onPress={() => void handleSignInWithApple()}
-                      />
-                    ) : null}
-
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.secondaryAction,
-                        styles.accountActionButton,
-                        pressed && styles.secondaryActionPressed,
-                        (!deviceAuthState.available || isAccountBusy) && styles.actionDisabled,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Continue with ${deviceAuthState.label}`}
-                      disabled={!deviceAuthState.available || isAccountBusy}
-                      onPress={() => void handleSignInWithDevice()}
-                    >
-                      <Text style={styles.secondaryActionLabel}>
-                        {`Continue with ${deviceAuthState.label}`}
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.ghostButton,
-                        styles.accountGhostButton,
-                        pressed && styles.ghostButtonPressed,
-                        isAccountBusy && styles.actionDisabled,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Continue in guest mode"
-                      disabled={isAccountBusy}
-                      onPress={() => void handleSignInAsGuest()}
-                    >
-                      <Text style={styles.ghostButtonLabel}>Continue as guest</Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.secondaryAction,
-                      styles.accountActionButton,
-                      pressed && styles.secondaryActionPressed,
-                      isAccountBusy && styles.actionDisabled,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Sign out and return to guest mode"
-                    disabled={isAccountBusy}
-                    onPress={() => void handleRemoveSavedAccount()}
-                  >
-                    <Text style={styles.secondaryActionLabel}>Sign out</Text>
-                  </Pressable>
-                )}
-
-                <View style={styles.accountHintCard}>
-                  <Text style={styles.accountHintTitle}>{isSignedIn ? 'Signed in on this device' : 'Keep it simple'}</Text>
-                  <Text style={styles.accountHintCopy}>
-                    {isSignedIn
-                      ? 'This sign-in is only saved on this device for quick access. It is not cloud sync yet.'
-                      : 'This version keeps sign-in local to your device. It is meant for quick access, not cloud sync yet.'}
-                  </Text>
-                </View>
-              </SectionCard>
-
               <SectionCard
                 eyebrow="Profile"
                 tone="rose"
@@ -3283,80 +3153,6 @@ function buildFavoriteSceneCopy(word: string, topic: string | null, memoryPrompt
   const topicHint = topic ? ` in a ${topic} scene` : '';
 
   return `Picture a ${mood} ${mascot}${topicHint} acting out "${word}" with ${prop}.`;
-}
-
-async function detectAvailableSignInOptions() {
-  const appleAvailable =
-    Platform.OS === 'ios' ? await AppleAuthentication.isAvailableAsync() : false;
-  const hasLocalAuthHardware = await LocalAuthentication.hasHardwareAsync();
-  const isLocalAuthEnrolled = await LocalAuthentication.isEnrolledAsync();
-  const supportedTypes = hasLocalAuthHardware
-    ? await LocalAuthentication.supportedAuthenticationTypesAsync()
-    : [];
-
-  return {
-    appleAvailable,
-    deviceAuth: {
-      available: hasLocalAuthHardware && isLocalAuthEnrolled,
-      label: getDeviceAuthLabel(supportedTypes),
-    } satisfies DeviceAuthState,
-  };
-}
-
-function getDeviceAuthLabel(types: LocalAuthentication.AuthenticationType[]) {
-  if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-    return Platform.OS === 'ios' ? 'Face ID' : 'Face unlock';
-  }
-
-  if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-    return Platform.OS === 'ios' ? 'Touch ID' : 'Fingerprint';
-  }
-
-  if (types.includes(LocalAuthentication.AuthenticationType.IRIS)) {
-    return 'Iris unlock';
-  }
-
-  return 'Device unlock';
-}
-
-function formatAppleFullName(
-  fullName: AppleAuthentication.AppleAuthenticationFullName | null,
-) {
-  if (!fullName) {
-    return '';
-  }
-
-  return [
-    fullName.givenName,
-    fullName.middleName,
-    fullName.familyName,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
-}
-
-function formatAccountMeta(session: AccountSession, deviceAuthLabel: string) {
-  if (session.provider === 'apple') {
-    return session.email
-      ? `${session.email} · Signed in with Apple`
-      : 'Signed in with Apple on this device';
-  }
-
-  if (session.provider === 'device') {
-    return `Quick unlock with ${deviceAuthLabel} on this device`;
-  }
-
-  return 'Guest mode keeps everything simple and local to this device';
-}
-
-function formatAccountSignedInLabel(value: string) {
-  const date = new Date(value);
-
-  return date.toLocaleDateString([], {
-    month: 'short',
-    day: 'numeric',
-  });
 }
 
 function formatAiStatusCopy(status: AiGenerationStatus) {
@@ -5291,84 +5087,6 @@ const styles = StyleSheet.create({
     color: '#6f748f',
     fontSize: 15,
     lineHeight: 22,
-  },
-  accountCard: {
-    borderRadius: 22,
-    backgroundColor: '#fff7f2',
-    borderWidth: 1,
-    borderColor: '#f0dbc9',
-    padding: 16,
-    gap: 8,
-  },
-  accountBadgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  accountBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: '#ffe9dc',
-    borderWidth: 1,
-    borderColor: '#f8c4a7',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  accountBadgeText: {
-    color: '#a25c35',
-    fontSize: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  accountSignedAt: {
-    color: '#8a7f87',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  accountTitle: {
-    color: '#25314c',
-    fontSize: 24,
-    fontWeight: '800',
-  },
-  accountCopy: {
-    color: '#6f748f',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  accountActionStack: {
-    gap: 10,
-  },
-  appleButton: {
-    width: '100%',
-    height: 52,
-  },
-  accountActionButton: {
-    minHeight: 52,
-    justifyContent: 'center',
-  },
-  accountGhostButton: {
-    alignItems: 'center',
-  },
-  accountHintCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#d8e4db',
-    backgroundColor: '#f8fbf9',
-    padding: 14,
-    gap: 6,
-  },
-  accountHintTitle: {
-    color: '#25314c',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  accountHintCopy: {
-    color: '#627284',
-    fontSize: 13,
-    lineHeight: 19,
   },
   profileCard: {
     borderRadius: 22,
