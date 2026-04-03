@@ -25,6 +25,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.rahulkumar.vocabbuilder",
       "buildNumber": "1",
+      "usesAppleSignIn": true,
       "config": {
         "usesNonExemptEncryption": false
       }
@@ -44,6 +45,13 @@
     "plugins": [
       "expo-sqlite",
       "expo-asset",
+      "expo-apple-authentication",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to quickly unlock your vocabulary profile."
+        }
+      ],
       [
         "expo-notifications",
         {

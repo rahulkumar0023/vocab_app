@@ -9,6 +9,7 @@ A lightweight Expo/React Native app to help you build vocabulary every day.
 - Local SQLite storage for words, review state, and review history.
 - Topic-based word imports using multiple Datamuse query strategies, dictionary enrichment, and curated fallback packs.
 - AI study kits that generate simpler explanations, memory hooks, mini quizzes, and usage tips.
+- Super-simple local sign-in options with Apple, biometrics, and guest mode.
 - A stronger mobile UI with dedicated `Today`, `Library`, `Add`, and `Profile` sections.
 - Practice modes for flashcards, multiple choice, and typing recall.
 - Word detail, edit, and delete flows for cleaning up your saved deck.
@@ -39,7 +40,7 @@ Then open the app with an emulator (Android/iOS) or in Expo Go.
 - `Today`: due reviews, practice mode switching, AI study kit, and progress toward the daily goal.
 - `Library`: search, filter, inspect, edit, and delete saved words.
 - `Add`: import topic-based words from live APIs or add custom words manually.
-- `Profile`: starter quiz, daily goal, reminder toggle, and preferred topic.
+- `Profile`: local sign-in, starter quiz, daily goal, reminder toggle, and preferred topic.
 
 ## Notifications & speech
 
